@@ -3,8 +3,8 @@ import numpy as np
 import time
 
 np.random.seed(12345)
-num_variables = 300
-num_restricciones = 500
+num_variables = 30
+num_restricciones = 50
 A = [np.random.rand(num_variables) for j in range(num_restricciones)]
 c = np.random.rand(num_variables)
 b = np.random.rand(num_restricciones)

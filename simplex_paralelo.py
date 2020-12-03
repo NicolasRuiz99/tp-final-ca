@@ -7,10 +7,71 @@ import sys
 logging.getLogger().setLevel(logging.INFO)
 log = logging.getLogger()
 
-comm = MPI.COMM_WORLD
+def multiplicar_matriz (A,B):
+    
+    if (len(A.shape) == 1):
+      A = np.atleast_2d (A)
+    if (len(B.shape) == 1):
+      B = B.reshape(-1,1)
 
-rank = comm.Get_rank()
-total_procesos = comm.Get_size()
+    C = np.empty((A.shape[0],B.shape[1]))
+    filasA = A.shape[0]
+    columnasB = B.shape[1]
+    columnasA = A.shape[1]
+                
+    columnas_proceso = columnasA // (total_procesos-1)
+    #print(str(columnas_proceso))
+    if (rank == (total_procesos-1)) and (columnasA % (total_procesos-1) != 0):
+      columnas_proceso += 1
+
+    for i in range (filasA):
+        for j in range (columnasB):
+
+            suma = 0
+
+            if rank == 0:
+
+                proceso = 1
+                for col in range(0,columnasA,columnas_proceso):
+
+                    if (proceso == (total_procesos)) and (columnasA % (total_procesos-1) != 0):
+                        break
+                    else:
+                        comm.send(col,dest=proceso)
+                    proceso += 1
+
+                for proc in range(1,total_procesos):
+                    suma += comm.recv(None,source=proc)
+
+                C[i,j] = suma
+            
+            else:
+                col = comm.recv(None,source=0)
+                #print (f'proceso {rank} col {col}',flush=True)
+                for k in range(col,col+columnas_proceso):
+                    #print (str(A[i,k]) + " * " + str(B[k,j]))
+                    #print(f'proceso {rank}, columnas {columnas_proceso}, k: {k}',flush=True)
+                    suma += A[i,k]*B[k,j]
+                    #print(f'suma: {suma}',flush=True)
+                """
+                  A[:,ve][ 20.  60.  30. 250.]
+                  B_1[[1. 0. 0. 0.]
+                  [0. 1. 0. 0.]
+                  [0. 0. 1. 0.]
+                  [0. 0. 0. 1.]]
+
+                  20 / 60 / 30 
+                  """
+
+                
+                comm.send(suma,dest=0)
+
+    C = comm.bcast(C,0)
+
+    if (C.shape[0] == 1 or C.shape[1] == 1):
+        C = C.flatten()
+
+    return C
 
 def simplex_init(c, greaterThans=[], gtThreshold=[], lessThans=[], ltThreshold=[], 
                          equalities=[], eqThreshold=[], maximization=True, M=1000.):
@@ -70,70 +131,62 @@ def simplex_init(c, greaterThans=[], gtThreshold=[], lessThans=[], ltThreshold=[
     A[(cant_lt+cant_gt):(cant_lt+cant_gt+cant_eq),:n] = equations
     b[(cant_lt+cant_gt):(cant_lt+cant_gt+cant_eq)] = eqThreshold
 
-  """
-  primer for
-  """
   
-  proceso = 1
-  for i in range(0,cant_lt,cant_por_proceso):
-    comm.send(cant_por_proceso,dest=proceso,tag=1)
-    comm.send(m,dest=proceso,tag=2)
-    comm.send(i,dest=proceso)
-    proceso += 1
-  
-  # Concatenar los arrays soluciones
-  for i in range(1,total_procesos):
-    resultados = comm.recv(None,source=i)
-    for tupla in resultados:
-      pos = tupla[1]
-      A[:,n+pos] = tupla[0]
-      base.append(n+pos)
+  if rank == 0:
 
-  """
-  segundo for
-  """
+    for i in range(cant_lt):
+      A[:, n+i] = [(1. if i == j else 0) for j in range(m)]
+      base.append(n+i)
 
-  print("cant_lt:"+ str(cant_lt))
-  print("cant_lt+2*cant_gt:"+ str(cant_lt + 2*cant_gt))
-  print("cant_por_proceso:"+ str(cant_por_proceso))
-
-  cant_por_proceso = ((cant_lt + 2*cant_gt)-cant_lt) // (total_procesos-1)
-  
-  proceso = 1
-  for i in range(cant_lt,cant_lt + 2*cant_gt,cant_por_proceso*2):
-    comm.send(cant_por_proceso,dest=proceso,tag=3)
-    comm.send(m,dest=proceso,tag=4)
-    comm.send(i,dest=proceso,tag=5)
-    #print (proceso)
-    proceso += 1
-
-  
-  for i in range(1,total_procesos):
-    resultados = comm.recv(None,source=i)
-    resultados2 = comm.recv(None,source=i)
-    for tupla in resultados:
-      pos = tupla[1]
-      A[:,n+pos] = tupla[0]
-
-    for tupla in resultados2:
-      pos = tupla[1]
-      A[:,n+pos+1]
-      c_p[n+pos+1] = -M
-      base.append(n+pos+1)
-  
-  
-  
-  for i in range(cant_lt, cant_lt + 2*cant_gt, 2):
-    A[:, n+i] = [(-1. if i == j else 0) for j in range(m)]
-    A[:, n+i+1] = [(1. if i == j else 0) for j in range(m)]
-    c_p[n+i+1] = -M
-    base.append(n+i+1)
+    for i in range(cant_lt, cant_lt + 2*cant_gt, 2):
+      A[:, n+i] = [(-1. if i == j else 0) for j in range(m)]
+      A[:, n+i+1] = [(1. if i == j else 0) for j in range(m)]
+      c_p[n+i+1] = -M
+      base.append(n+i+1)
   
 
-  for i in range(cant_lt + 2*cant_gt, cant_lt + 2*cant_gt + cant_eq):
-    A[:, n+i] = [(1. if i == j else 0) for j in range(m)]
-    c_p[n+i] = -M
-    base.append(n+i)
+    for i in range(cant_lt + 2*cant_gt, cant_lt + 2*cant_gt + cant_eq):
+      A[:, n+i] = [(1. if i == j else 0) for j in range(m)]
+      c_p[n+i] = -M
+      base.append(n+i)
+
+    """
+    primer for paralelo
+    
+
+    proceso = 1
+    for i in range(0,cant_lt,cant_por_proceso):
+      comm.send(i,dest=proceso)
+      proceso += 1
+    
+    # Concatenar los arrays soluciones
+    for i in range(1,total_procesos):
+      resultados = comm.recv(None,source=i)
+      for tupla in resultados:
+        pos = tupla[1]
+        A[:,n+pos] = tupla[0]
+        base.append(n+pos)
+
+    """
+
+    
+
+  #else:
+    """
+    i = comm.recv(None,source=0)
+    resultados = []
+    #if (rank == (total_procesos-1)) and (cant_lt % (total_procesos-1) != 0):
+    #  cant_por_proceso += 1
+    for x in range(i,i+cant_por_proceso):
+      resultados.append(([(1. if x == j else 0) for j in range(m)],x))  
+
+    comm.send(resultados,dest=0)  
+    """
+
+  base = comm.bcast(base)
+  c_p = comm.bcast(c_p)
+  A = comm.bcast(A)
+  b = comm.bcast(b)
 
   return base, c_p, A, b
 
@@ -157,12 +210,15 @@ def solve_linear_program(base, c_p, A, b):
   y hallar los precios sombra y costos reducidos, de ser necesario)
   
   '''
+
   #B = A[:, base]
   m = len(b)
   B_1 = np.eye(m)
 
   # Iteración del método
-  zj_cj = np.round(np.matmul(c_p[base], np.matmul(B_1, A)) - c_p, 10)
+
+  zj_cj = np.round(multiplicar_matriz(c_p[base],multiplicar_matriz(B_1,A)) - c_p, 10)
+  
   # esto de antes se podria mejorar calculando sólo para las VNB
 
   # Mientras pueda mejorar
@@ -171,9 +227,14 @@ def solve_linear_program(base, c_p, A, b):
     ve = np.argmin(zj_cj)
     log.info("Nueva variable entrante: x_{}".format(ve))
     # Vector correspondiente a la variable entrante
-    A_ve = np.matmul(B_1, A[:, ve])
+
+    A_ve = multiplicar_matriz(B_1,A[:,ve])
+
     # Calculamos los cocientes tita
-    b_p = np.matmul(B_1, b)
+
+
+    b_p = multiplicar_matriz(B_1,b)
+
     titas = [(b_p[i]/A_ve[i] if A_ve[i] > 0 else np.nan) for i in range(m)]
     
     if all(np.isnan(tita) for tita in titas):
@@ -189,71 +250,111 @@ def solve_linear_program(base, c_p, A, b):
     E[:,vs] = A_ve
     E_1 = np.eye(m)
     E_1[:,vs] = [(-E[i, vs]/E[vs, vs] if i != vs else 1./E[vs, vs]) for i in range(m)]
-    
-    B_1 = np.matmul(E_1, B_1)
-    zj_cj = np.round(np.matmul(c_p[base], np.matmul(B_1, A)) - c_p, 10)
+
+
+    B_1 = multiplicar_matriz(E_1,B_1)
+
+
+    zj_cj = np.round(multiplicar_matriz(c_p[base], multiplicar_matriz(B_1,A)) - c_p, 10)
+
   # Cuando ya no puede mejorar
-  b_p = np.matmul(B_1, b)
+  
+
+  b_p = multiplicar_matriz(B_1,b)
+
   x_opt = {base[j]: b_p[j] for j in range(m)}
-  z_opt = np.matmul(c_p[base], b_p)
+  
+  
+  
+  z_opt = multiplicar_matriz(c_p[base], b_p)
+
   return x_opt, z_opt, B_1
 
 
-"""
+
 np.random.seed(12345)
-num_variables = 300
-num_restricciones = 500
+num_variables = 30
+num_restricciones = 50
 A = [np.random.rand(num_variables) for j in range(num_restricciones)]
 c = np.random.rand(num_variables)
 b = np.random.rand(num_restricciones)
-"""
+
+
+comm = MPI.COMM_WORLD
+
+rank = comm.Get_rank()
+total_procesos = comm.Get_size()
 
 start_time = time.time()
 
+base, c_p, A, b = simplex_init(c, lessThans=A, ltThreshold=b, maximization=True, M=10.)
+#base, c_p, A, b = simplex_init([300., 250., 450.], greaterThans=[[0., 250., 0.]], gtThreshold=[500.], lessThans=[[15., 20., 25.], [35., 60., 60.], [20., 30., 25.]], ltThreshold=[1200., 3000., 1500.], maximization=True, M=1000.)
+
+x_opt, z_opt, _ = solve_linear_program(base, c_p, A, b)
+
+tiempo = (time.time() - start_time)
+
 if rank == 0:
-  #base, c_p, A, b = simplex_init(c, lessThans=A, ltThreshold=b, maximization=True, M=10.)
-  base, c_p, A, b = simplex_init([300., 250., 450.], greaterThans=[[0., 250., 0.]], gtThreshold=[500.], lessThans=[[15., 20., 25.], [35., 60., 60.], [20., 30., 25.]], ltThreshold=[1200., 3000., 1500.], maximization=True, M=1000.)
-
-  x_opt, z_opt, _ = solve_linear_program(base, c_p, A, b)
-
-  tiempo = (time.time() - start_time)
 
   print("La solución es:")
   for j in x_opt:
     print("x_{} = {}".format(j, x_opt[j]))
+    
   print("Esto produce un funcional de z = {}".format(z_opt))
 
   print("--- %s seconds ---" % tiempo)
 
-else:
 
-  """
-  primer for
-  """
-  cant_por_proceso = comm.recv(None,source=0,tag=1)
-  m = comm.recv(None,source=0,tag=2)
-  i = comm.recv(None,source=0)
-  resultados = []
-  for x in range(i,i+cant_por_proceso):
-    resultados.append(([(1. if x == j else 0) for j in range(m)],x))  
+"""
+segundo for que va en el else del rank
+"""
+"""
+cant_por_proceso = comm.recv(None,source=0,tag=3)
+m = comm.recv(None,source=0,tag=4)
+i = comm.recv(None,source=0,tag=5)
+resultados = []
+resultados2 = []
+for x in range(i,i+cant_por_proceso):
+resultados.append(([(-1. if i == j else 0) for j in range(m)],x))  
+resultados2.append(([(1. if i == j else 0) for j in range(m)],x))
+print(resultados)
 
-  comm.send(resultados,dest=0)
+comm.send(resultados,dest=0)
+comm.send(resultados2,dest=0)
+"""
 
-  """
-  segundo for
-  """
+
+
+"""
+segundo for que va dentro del rank = 0
+"""
+"""
+print("cant_lt:"+ str(cant_lt))
+print("cant_lt+2*cant_gt:"+ str(cant_lt + 2*cant_gt))
+print("cant_por_proceso:"+ str(cant_por_proceso))
+
+cant_por_proceso = ((cant_lt + 2*cant_gt)-cant_lt) // (total_procesos-1)
+
+proceso = 1
+for i in range(cant_lt,cant_lt + 2*cant_gt,cant_por_proceso*2):
+  comm.send(cant_por_proceso,dest=proceso,tag=3)
+  comm.send(m,dest=proceso,tag=4)
+  comm.send(i,dest=proceso,tag=5)
+  #print (proceso)
+  proceso += 1
+
+
+for i in range(1,total_procesos):
+  resultados = comm.recv(None,source=i)
+  resultados2 = comm.recv(None,source=i)
+  for tupla in resultados:
+    pos = tupla[1]
+    A[:,n+pos] = tupla[0]
+
+  for tupla in resultados2:
+    pos = tupla[1]
+    A[:,n+pos+1]
+    c_p[n+pos+1] = -M
+    base.append(n+pos+1)
+"""
   
-  cant_por_proceso = comm.recv(None,source=0,tag=3)
-  m = comm.recv(None,source=0,tag=4)
-  i = comm.recv(None,source=0,tag=5)
-  resultados = []
-  resultados2 = []
-  for x in range(i,i+cant_por_proceso):
-    resultados.append(([(-1. if i == j else 0) for j in range(m)],x))  
-    resultados2.append(([(1. if i == j else 0) for j in range(m)],x))
-  print(resultados)
-
-  comm.send(resultados,dest=0)
-  comm.send(resultados2,dest=0)
-  
-
