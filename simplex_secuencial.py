@@ -1,5 +1,8 @@
+import os
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
 import numpy as np
 import logging
+import time
 
 logging.getLogger().setLevel(logging.INFO)
 log = logging.getLogger()
@@ -136,3 +139,26 @@ def solve_linear_program(base, c_p, A, b):
   x_opt = {base[j]: b_p[j] for j in range(m)}
   z_opt = np.matmul(c_p[base], b_p)
   return x_opt, z_opt, B_1
+
+
+np.random.seed(12345)
+num_variables = 30
+num_restricciones = 50
+A = [np.random.rand(num_variables) for j in range(num_restricciones)]
+c = np.random.rand(num_variables)
+b = np.random.rand(num_restricciones)
+
+start_time = time.time()
+
+base, c_p, A, b = simplex_init(c, lessThans=A, ltThreshold=b, maximization=True, M=10.)
+#base, c_p, A, b = simplex_init([300., 250., 450.], greaterThans=[[0., 250., 0.]], gtThreshold=[500.], lessThans=[[15., 20., 25.], [35., 60., 60.], [20., 30., 25.]], ltThreshold=[1200., 3000., 1500.], maximization=True, M=1000.)
+x_opt, z_opt, _ = solve_linear_program(base, c_p, A, b)
+
+tiempo = (time.time() - start_time)
+
+print("La solución es:")
+for j in x_opt:
+  print("x_{} = {}".format(j, x_opt[j]))
+print("Esto produce un funcional de z = {}".format(z_opt))
+
+print("--- %s seconds ---" % tiempo)

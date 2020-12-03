@@ -9,6 +9,8 @@ log = logging.getLogger()
 
 def multiplicar_matriz (A,B):
     
+    #Controla las dimensiones de las matrices recibidas como parametro
+
     if (len(A.shape) == 1):
       A = np.atleast_2d (A)
     if (len(B.shape) == 1):
@@ -20,9 +22,12 @@ def multiplicar_matriz (A,B):
     columnasA = A.shape[1]
                 
     columnas_proceso = columnasA // (total_procesos-1)
-    #print(str(columnas_proceso))
-    if (rank == (total_procesos-1)) and (columnasA % (total_procesos-1) != 0):
-      columnas_proceso += 1
+
+    #Para el caso en el que los datos a repartir y los procesos no son múltiplos
+
+    resto = columnasA % (total_procesos-1)
+    if (rank == (total_procesos-1)) and resto != 0:
+        columnas_proceso += resto
 
     for i in range (filasA):
         for j in range (columnasB):
@@ -30,6 +35,8 @@ def multiplicar_matriz (A,B):
             suma = 0
 
             if rank == 0:
+
+                #Se reparten las columnas de A que van a trabajar los procesos
 
                 proceso = 1
                 for col in range(0,columnasA,columnas_proceso):
@@ -40,33 +47,28 @@ def multiplicar_matriz (A,B):
                         comm.send(col,dest=proceso)
                     proceso += 1
 
+                #El proceso 0 recibe los resultados y acumula
+
                 for proc in range(1,total_procesos):
                     suma += comm.recv(None,source=proc)
 
                 C[i,j] = suma
             
             else:
+
+                #Cada proceso recive su parte y resuelve
+
                 col = comm.recv(None,source=0)
-                #print (f'proceso {rank} col {col}',flush=True)
                 for k in range(col,col+columnas_proceso):
-                    #print (str(A[i,k]) + " * " + str(B[k,j]))
-                    #print(f'proceso {rank}, columnas {columnas_proceso}, k: {k}',flush=True)
                     suma += A[i,k]*B[k,j]
-                    #print(f'suma: {suma}',flush=True)
-                """
-                  A[:,ve][ 20.  60.  30. 250.]
-                  B_1[[1. 0. 0. 0.]
-                  [0. 1. 0. 0.]
-                  [0. 0. 1. 0.]
-                  [0. 0. 0. 1.]]
-
-                  20 / 60 / 30 
-                  """
-
                 
                 comm.send(suma,dest=0)
 
+    #Se envia una copia del resultado de la multiplicacion a todos los procesos
+
     C = comm.bcast(C,0)
+
+    #Se pasa a 1D si la matriz resultante es una sola columna o fila
 
     if (C.shape[0] == 1 or C.shape[1] == 1):
         C = C.flatten()
@@ -108,8 +110,6 @@ def simplex_init(c, greaterThans=[], gtThreshold=[], lessThans=[], ltThreshold=[
   cant_gt = len(gtThreshold)
   cant_lt = len(ltThreshold)
   cant_eq = len(eqThreshold)
-
-  cant_por_proceso = cant_lt // (total_procesos-1)
   
   m = cant_gt + cant_lt + cant_eq
   n = len(c)
@@ -128,38 +128,37 @@ def simplex_init(c, greaterThans=[], gtThreshold=[], lessThans=[], ltThreshold=[
     A[cant_lt:(cant_lt+cant_gt),:n] = greaterThans
     b[cant_lt:(cant_lt+cant_gt)] = gtThreshold
   if cant_eq > 0:
-    A[(cant_lt+cant_gt):(cant_lt+cant_gt+cant_eq),:n] = equations
+    A[(cant_lt+cant_gt):(cant_lt+cant_gt+cant_eq),:n] = equalities
     b[(cant_lt+cant_gt):(cant_lt+cant_gt+cant_eq)] = eqThreshold
 
-  
+  #Se calcula la cantidad de datos que le corresponde a cada proceso
+
+  cant_por_proceso = cant_lt // (total_procesos-1)
+  resto = cant_lt % (total_procesos-1)
+
+  #Para el caso en el que los datos a repartir y los procesos no son múltiplos
+
+  if (rank == (total_procesos-1)) and resto != 0:
+    cant_por_proceso += resto
+
   if rank == 0:
 
-    for i in range(cant_lt):
-      A[:, n+i] = [(1. if i == j else 0) for j in range(m)]
-      base.append(n+i)
-
-    for i in range(cant_lt, cant_lt + 2*cant_gt, 2):
-      A[:, n+i] = [(-1. if i == j else 0) for j in range(m)]
-      A[:, n+i+1] = [(1. if i == j else 0) for j in range(m)]
-      c_p[n+i+1] = -M
-      base.append(n+i+1)
-  
-
-    for i in range(cant_lt + 2*cant_gt, cant_lt + 2*cant_gt + cant_eq):
-      A[:, n+i] = [(1. if i == j else 0) for j in range(m)]
-      c_p[n+i] = -M
-      base.append(n+i)
-
     """
-    primer for paralelo
-    
+    Primer for paralelo
+    """
+
+    #Se envia a cada proceso su parte para calcular
 
     proceso = 1
     for i in range(0,cant_lt,cant_por_proceso):
-      comm.send(i,dest=proceso)
+      if (proceso == (total_procesos)) and (cant_lt % (total_procesos-1) != 0):
+        break
+      else:                  
+        comm.send(i,dest=proceso)
       proceso += 1
     
-    # Concatenar los arrays soluciones
+    #Agrupa los arrays soluciones en la base y la matriz A
+
     for i in range(1,total_procesos):
       resultados = comm.recv(None,source=i)
       for tupla in resultados:
@@ -168,20 +167,33 @@ def simplex_init(c, greaterThans=[], gtThreshold=[], lessThans=[], ltThreshold=[
         base.append(n+pos)
 
     """
-
-    
-
-  #else:
+    for secuenciales
     """
+
+    #En estos dos for, la cantidad de iteraciones son demasiadas pocas para repartir entre los procesos
+
+    for i in range(cant_lt, cant_lt + 2*cant_gt, 2):
+      A[:, n+i] = [(-1. if i == j else 0) for j in range(m)]
+      A[:, n+i+1] = [(1. if i == j else 0) for j in range(m)]
+      c_p[n+i+1] = -M
+      base.append(n+i+1)
+  
+    for i in range(cant_lt + 2*cant_gt, cant_lt + 2*cant_gt + cant_eq):
+      A[:, n+i] = [(1. if i == j else 0) for j in range(m)]
+      c_p[n+i] = -M
+      base.append(n+i)
+
+  else:
+    
+    #Cada proceso recive y guarda en una lista las tuplas con el vector y la posición correspondiente en cada una
+
     i = comm.recv(None,source=0)
     resultados = []
-    #if (rank == (total_procesos-1)) and (cant_lt % (total_procesos-1) != 0):
-    #  cant_por_proceso += 1
     for x in range(i,i+cant_por_proceso):
       resultados.append(([(1. if x == j else 0) for j in range(m)],x))  
-
     comm.send(resultados,dest=0)  
-    """
+
+  #Se envia una copia de la inicializacion a todos los procesos
 
   base = comm.bcast(base)
   c_p = comm.bcast(c_p)
@@ -212,6 +224,7 @@ def solve_linear_program(base, c_p, A, b):
   '''
 
   #B = A[:, base]
+
   m = len(b)
   B_1 = np.eye(m)
 
@@ -222,49 +235,103 @@ def solve_linear_program(base, c_p, A, b):
   # esto de antes se podria mejorar calculando sólo para las VNB
 
   # Mientras pueda mejorar
+
   while any(x < 0 for x in zj_cj):
+
     # Determinar Variable Entrante
+
     ve = np.argmin(zj_cj)
     log.info("Nueva variable entrante: x_{}".format(ve))
+    
     # Vector correspondiente a la variable entrante
 
     A_ve = multiplicar_matriz(B_1,A[:,ve])
 
-    # Calculamos los cocientes tita
-
+    """
+    Calculamos los cocientes tita en paralelo 
+    """
 
     b_p = multiplicar_matriz(B_1,b)
 
-    titas = [(b_p[i]/A_ve[i] if A_ve[i] > 0 else np.nan) for i in range(m)]
+    #Se calcula la cantidad de datos que le corresponde a cada proceso
+
+    cant_por_proceso = m // (total_procesos-1)
+    resto = m % (total_procesos-1)
+
+    #Para el caso en el que los datos a repartir y los procesos no son múltiplos
+
+    if (rank == (total_procesos-1)) and resto != 0:
+      cant_por_proceso += resto
+
+    titas = []
+
+    if rank == 0:
+
+      #Se reparten las columnas de A que van a trabajar los procesos
+
+      proceso = 1
+      for i in range(0,m,cant_por_proceso):
+
+        if (proceso == (total_procesos)) and (m % (total_procesos-1) != 0):
+            break
+        else:
+            comm.send(i,dest=proceso)
+        proceso += 1
+
+      #Agrupa los arrays soluciones en la base y la matriz A
+      
+      for i in range(1,total_procesos):
+        resultados = comm.recv(None,source=i)
+        titas.extend(resultados)
+
+
+    else:
     
+      #Cada proceso recive y guarda en una lista las tuplas con el vector y la posición correspondiente en cada una
+
+      i = comm.recv(None,source=0)
+      resultados = []
+      for x in range(i,i+cant_por_proceso):
+        if A_ve[x] > 0:
+          calculo = b_p[x]/A_ve[x]
+        else:
+          calculo = np.nan
+        resultados.append(calculo)
+
+      comm.send(resultados,dest=0)  
+
+    comm.barrier()
+    titas = comm.bcast (titas)
+
+
     if all(np.isnan(tita) for tita in titas):
       log.info("Problema no acotado")
       raise("Problema no acotado")
+
     # Determinar Variable Saliente
+
     vs = np.nanargmin(titas)
     log.info("Nueva variable saliente: x_{}".format(base[vs]))
     base[vs] = ve
     log.info("Nueva base: {}".format(base))
+
     # Actualizar matriz inversa B_1
+
     E = np.eye(m)
     E[:,vs] = A_ve
     E_1 = np.eye(m)
+
     E_1[:,vs] = [(-E[i, vs]/E[vs, vs] if i != vs else 1./E[vs, vs]) for i in range(m)]
 
-
     B_1 = multiplicar_matriz(E_1,B_1)
-
 
     zj_cj = np.round(multiplicar_matriz(c_p[base], multiplicar_matriz(B_1,A)) - c_p, 10)
 
   # Cuando ya no puede mejorar
-  
 
   b_p = multiplicar_matriz(B_1,b)
 
   x_opt = {base[j]: b_p[j] for j in range(m)}
-  
-  
   
   z_opt = multiplicar_matriz(c_p[base], b_p)
 
@@ -279,7 +346,6 @@ A = [np.random.rand(num_variables) for j in range(num_restricciones)]
 c = np.random.rand(num_variables)
 b = np.random.rand(num_restricciones)
 
-
 comm = MPI.COMM_WORLD
 
 rank = comm.Get_rank()
@@ -287,8 +353,8 @@ total_procesos = comm.Get_size()
 
 start_time = time.time()
 
-base, c_p, A, b = simplex_init(c, lessThans=A, ltThreshold=b, maximization=True, M=10.)
-#base, c_p, A, b = simplex_init([300., 250., 450.], greaterThans=[[0., 250., 0.]], gtThreshold=[500.], lessThans=[[15., 20., 25.], [35., 60., 60.], [20., 30., 25.]], ltThreshold=[1200., 3000., 1500.], maximization=True, M=1000.)
+#base, c_p, A, b = simplex_init(c, lessThans=A, ltThreshold=b, maximization=True, M=10.)
+base, c_p, A, b = simplex_init([300., 250., 450.], greaterThans=[[0., 250., 0.]], gtThreshold=[500.], lessThans=[[15., 20., 25.], [35., 60., 60.], [20., 30., 25.]], ltThreshold=[1200., 3000., 1500.], maximization=True, M=1000.)
 
 x_opt, z_opt, _ = solve_linear_program(base, c_p, A, b)
 
@@ -303,58 +369,3 @@ if rank == 0:
   print("Esto produce un funcional de z = {}".format(z_opt))
 
   print("--- %s seconds ---" % tiempo)
-
-
-"""
-segundo for que va en el else del rank
-"""
-"""
-cant_por_proceso = comm.recv(None,source=0,tag=3)
-m = comm.recv(None,source=0,tag=4)
-i = comm.recv(None,source=0,tag=5)
-resultados = []
-resultados2 = []
-for x in range(i,i+cant_por_proceso):
-resultados.append(([(-1. if i == j else 0) for j in range(m)],x))  
-resultados2.append(([(1. if i == j else 0) for j in range(m)],x))
-print(resultados)
-
-comm.send(resultados,dest=0)
-comm.send(resultados2,dest=0)
-"""
-
-
-
-"""
-segundo for que va dentro del rank = 0
-"""
-"""
-print("cant_lt:"+ str(cant_lt))
-print("cant_lt+2*cant_gt:"+ str(cant_lt + 2*cant_gt))
-print("cant_por_proceso:"+ str(cant_por_proceso))
-
-cant_por_proceso = ((cant_lt + 2*cant_gt)-cant_lt) // (total_procesos-1)
-
-proceso = 1
-for i in range(cant_lt,cant_lt + 2*cant_gt,cant_por_proceso*2):
-  comm.send(cant_por_proceso,dest=proceso,tag=3)
-  comm.send(m,dest=proceso,tag=4)
-  comm.send(i,dest=proceso,tag=5)
-  #print (proceso)
-  proceso += 1
-
-
-for i in range(1,total_procesos):
-  resultados = comm.recv(None,source=i)
-  resultados2 = comm.recv(None,source=i)
-  for tupla in resultados:
-    pos = tupla[1]
-    A[:,n+pos] = tupla[0]
-
-  for tupla in resultados2:
-    pos = tupla[1]
-    A[:,n+pos+1]
-    c_p[n+pos+1] = -M
-    base.append(n+pos+1)
-"""
-  
