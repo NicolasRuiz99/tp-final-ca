@@ -21,11 +21,11 @@ def multiplicar_matriz (A,B):
     columnasB = B.shape[1]
     columnasA = A.shape[1]
                 
-    columnas_proceso = columnasA // (total_procesos-1)
+    columnas_proceso = columnasA // (total_procesos)
 
     #Para el caso en el que los datos a repartir y los procesos no son múltiplos
 
-    resto = columnasA % (total_procesos-1)
+    resto = columnasA % (total_procesos)
     if (rank == (total_procesos-1)) and resto != 0:
         columnas_proceso += resto
 
@@ -39,13 +39,18 @@ def multiplicar_matriz (A,B):
                 #Se reparten las columnas de A que van a trabajar los procesos
 
                 proceso = 1
-                for col in range(0,columnasA,columnas_proceso):
+                for col in range(columnas_proceso,columnasA,columnas_proceso):
 
-                    if (proceso == (total_procesos)) and (columnasA % (total_procesos-1) != 0):
+                    if (proceso == (total_procesos) and resto != 0):
                         break
                     else:
                         comm.send(col,dest=proceso)
                     proceso += 1
+
+                #El proceso 0 hace su parte
+
+                for k in range(0,columnas_proceso):
+                  suma += A[i,k]*B[k,j]
 
                 #El proceso 0 recibe los resultados y acumula
 
@@ -133,8 +138,8 @@ def simplex_init(c, greaterThans=[], gtThreshold=[], lessThans=[], ltThreshold=[
 
   #Se calcula la cantidad de datos que le corresponde a cada proceso
 
-  cant_por_proceso = cant_lt // (total_procesos-1)
-  resto = cant_lt % (total_procesos-1)
+  cant_por_proceso = cant_lt // (total_procesos)
+  resto = cant_lt % (total_procesos)
 
   #Para el caso en el que los datos a repartir y los procesos no son múltiplos
 
@@ -150,12 +155,18 @@ def simplex_init(c, greaterThans=[], gtThreshold=[], lessThans=[], ltThreshold=[
     #Se envia a cada proceso su parte para calcular
 
     proceso = 1
-    for i in range(0,cant_lt,cant_por_proceso):
-      if (proceso == (total_procesos)) and (cant_lt % (total_procesos-1) != 0):
+    for i in range(cant_por_proceso,cant_lt,cant_por_proceso):
+      if (proceso == (total_procesos) and resto != 0):
         break
       else:                  
         comm.send(i,dest=proceso)
       proceso += 1
+
+    #El proceso 0 hace su parte
+
+    for x in range(0,cant_por_proceso):
+      A[:,n+x] = [(1. if x == j else 0) for j in range(m)]
+      base.append(n+x)
     
     #Agrupa los arrays soluciones en la base y la matriz A
 
@@ -255,8 +266,8 @@ def solve_linear_program(base, c_p, A, b):
 
     #Se calcula la cantidad de datos que le corresponde a cada proceso
 
-    cant_por_proceso = m // (total_procesos-1)
-    resto = m % (total_procesos-1)
+    cant_por_proceso = m // (total_procesos)
+    resto = m % (total_procesos)
 
     #Para el caso en el que los datos a repartir y los procesos no son múltiplos
 
@@ -270,13 +281,22 @@ def solve_linear_program(base, c_p, A, b):
       #Se reparten las columnas de A que van a trabajar los procesos
 
       proceso = 1
-      for i in range(0,m,cant_por_proceso):
+      for i in range(cant_por_proceso,m,cant_por_proceso):
 
-        if (proceso == (total_procesos)) and (m % (total_procesos-1) != 0):
+        if (proceso == (total_procesos) and resto != 0):
             break
         else:
             comm.send(i,dest=proceso)
         proceso += 1
+
+      #El proceso 0 hace su parte
+      for x in range(0,cant_por_proceso):
+        if A_ve[x] > 0:
+          calculo = b_p[x]/A_ve[x]
+        else:
+          calculo = np.nan
+        titas.append(calculo)
+
 
       #Agrupa los arrays soluciones en la base y la matriz A
       
@@ -353,8 +373,8 @@ total_procesos = comm.Get_size()
 
 start_time = time.time()
 
-#base, c_p, A, b = simplex_init(c, lessThans=A, ltThreshold=b, maximization=True, M=10.)
-base, c_p, A, b = simplex_init([300., 250., 450.], greaterThans=[[0., 250., 0.]], gtThreshold=[500.], lessThans=[[15., 20., 25.], [35., 60., 60.], [20., 30., 25.]], ltThreshold=[1200., 3000., 1500.], maximization=True, M=1000.)
+base, c_p, A, b = simplex_init(c, lessThans=A, ltThreshold=b, maximization=True, M=10.)
+#base, c_p, A, b = simplex_init([300., 250., 450.], greaterThans=[[0., 250., 0.]], gtThreshold=[500.], lessThans=[[15., 20., 25.], [35., 60., 60.], [20., 30., 25.]], ltThreshold=[1200., 3000., 1500.], maximization=True, M=1000.)
 
 x_opt, z_opt, _ = solve_linear_program(base, c_p, A, b)
 
